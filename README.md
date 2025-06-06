@@ -45,3 +45,11 @@ To continue training a model from checkpoint
 
 In order to evaluate a model, run:  
 ```python your_script.py --mode eval --checkpoint ckpt-3500 --render```
+
+## Notes
+
+The code is based on the lectures and lecture-notes on Actor-Critic methods, tensorflow implementation and multi-agent systems
+(https://www.mircomusolesi.org/courses/AAS24-25/AAS24-25-main/) as well as ideas from online sources on multi agent reinforcement learning (https://arxiv.org/pdf/2409.03052).
+Some implementation details also took inspiration from this blogpost about PPO (https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/).
+
+Aids like chatGPT and copilot was occationally used for troubleshooting and help during debugging, and the code might show signs of this. However, I have tried my best to make it my own work and stick to my own ideas and implementations. 
