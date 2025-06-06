@@ -1,0 +1,6 @@
+opencv_contrib_python==4.8.1.78
+opencv_python==4.8.1.78
+overcooked_ai==1.1.0
+tensorflow==2.19.0
+tensorflow_probability==0.25.0
+matplotlib==3.5.1

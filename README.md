@@ -27,24 +27,33 @@ Checkpoints can be found in the "checkpoints/" folder
 
 
 ## Requirements
+tensorflow==2.19.0
+tensorflow_probability==0.25.0
+tf_keras==2.19.0
+jinja2
+pyyaml==6.0.2
+typeguard==4.4.3
+
+opencv_python==4.8.1.78
+opencv_contrib_python==4.8.1.78
+matplotlib==3.5.1
 
 overcooked-ai (https://github.com/HumanCompatibleAI/overcooked_ai)
-Other requirements are stated in requirements.txt
 
 ## Installation
 
-Create a virtual environment, install overcooked-ai from source and install other requirements from requirements.txt
+Create a virtual environment, install requirements from requirements.txt and than install overcooked-ai from source
 
 ## Usage
 
 To train a model from scratch:  
-```python your_script.py --mode train```
+```python3 overcooked_a2c.py --mode train```
 
 To continue training a model from checkpoint  
-```python your_script.py --mode train_resume --checkpoint ckpt-2500 --step 2500```
+```python3 overcooked_a2c.py --mode train_resume --checkpoint ckpt-2500 --step 2500```
 
 In order to evaluate a model, run:  
-```python your_script.py --mode eval --checkpoint ckpt-3500 --render```
+```python3 overcooked_a2c.py --mode eval --checkpoint ckpt-3500 --render```
 
 ## Notes
 

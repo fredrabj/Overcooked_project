@@ -27,9 +27,9 @@ num_episodes = 3500
 gae_lambda = 0.95
 
 # Misc. variables
-checkpoint_dir = "checkpoints/centre_pots"
+checkpoint_dir = "checkpoints/a2c"
 horizon = 400
-layout = "centre_pots"
+layout = "cramped_room"
 
 
 # Define models
