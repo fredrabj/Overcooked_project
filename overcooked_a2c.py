@@ -2,7 +2,7 @@ import tensorflow as tf
 import numpy as np
 import random
 import datetime
-import time
+import os
 import matplotlib.pyplot as plt
 import tensorflow_probability as tfp
 
@@ -24,9 +24,10 @@ gamma = 0.99
 actor_lr = 2.5e-4
 critic_lr = 1e-3
 entropy_coef = 0.001
-num_episodes = 1500
+num_episodes = 100
 gae_lambda = 0.95
-# You can adjust these as needed.
+checkpoint_dir = "checkpoints/a2c"
+
 # ------------------------------------------------------------------------------
 # Model Definitions
 # ------------------------------------------------------------------------------
@@ -138,11 +139,13 @@ def main():
     _ = critic(tf.concat([dummy_input, dummy_input], axis=-1))
     
     # Logging setup.
-    history = np.zeros((num_episodes, 2))
+    history = np.zeros((num_episodes, 3))
     train_step = 0
     log_dir = "logs/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     agent_1_writer = tf.summary.create_file_writer(log_dir + "/agent_1")
     agent_2_writer = tf.summary.create_file_writer(log_dir + "/agent_2")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    ep_reward_tot = 0
 
     for episode in range(num_episodes):
         state = env.reset()  # Expect state["both_agent_obs"] = (obs_agent1, obs_agent2)
@@ -166,14 +169,17 @@ def main():
             action2 = int(action2_tf.numpy())
 
             # Step the environment.
-            state, reward, done, info = env.step((action1, action2))
+            state, _, done, info = env.step((action1, action2))
             # Optionally print special messages.
-            if reward != 0:
-                print("== Soup delivered! ==")
+
             # Get shaped rewards per agent and add shared reward.
-            rew1, rew2 = info["shaped_r_by_agent"]
-            rew1 += reward
-            rew2 += reward
+            sparse_r1, sparse_r2 = info["sparse_r_by_agent"]
+            shaped_r1, shaped_r2 = info["shaped_r_by_agent"]
+            
+            rew1 = sparse_r1 + shaped_r1
+            rew2 = sparse_r2 + shaped_r2
+
+            ep_reward_tot += sparse_r1 + sparse_r2
 
             # Store observations, actions, and rewards.
             obs1_list.append(obs1)
@@ -218,33 +224,53 @@ def main():
         loss1 = update_policy(agent_1_policy, actor_optimizer_1, obs1_tensor, act1_tensor, advantages)
         loss2 = update_policy(agent_2_policy, actor_optimizer_2, obs2_tensor, act2_tensor, advantages)
 
+        
+
+        # Logging
+
+        ep_reward_1 = sum(rew1_list)
+        ep_reward_2 = sum(rew2_list)
+        history[episode] = np.array([ep_reward_1, ep_reward_2, ep_reward_tot])
+        window = min(30, episode + 1)
+        avg_reward_1 = np.mean(history[episode - window + 1:episode + 1, 0])
+        avg_reward_2 = np.mean(history[episode - window + 1:episode + 1, 1])
+        avg_reward_tot = np.mean(history[episode - window + 1: episode + 1, 2])
+        print(f"Episode {episode+1}: Reward Agent 1 = {ep_reward_1:.2f} (Avg: {avg_reward_1:.2f}), "
+              f"Agent 2 = {ep_reward_2:.2f} (Avg: {avg_reward_2:.2f}) | Total: {ep_reward_tot:.2f} (Avg: {avg_reward_tot:.2f})")
+        ep_reward_tot = 0
+
         # Log losses and returns.
         with agent_1_writer.as_default():
             tf.summary.scalar("policy_loss", loss1, step=train_step)
             tf.summary.scalar("episode_return", sum(rew1_list), step=train_step)
+            tf.summary.scalar("avg_reward", avg_reward_1, step=train_step)
         with agent_2_writer.as_default():
             tf.summary.scalar("policy_loss", loss2, step=train_step)
             tf.summary.scalar("episode_return", sum(rew2_list), step=train_step)
+            tf.summary.scalar("avg_reward", avg_reward_2, step=train_step)
+            tf.summary.scalar("avg_total_reward", avg_reward_tot, step=train_step)
         train_step += 1
 
-        # Store rewards for moving average computation.
-        ep_reward_1 = sum(rew1_list)
-        ep_reward_2 = sum(rew2_list)
-        history[episode] = np.array([ep_reward_1, ep_reward_2])
-        window = min(30, episode + 1)
-        avg_reward_1 = np.mean(history[episode - window + 1:episode + 1, 0])
-        avg_reward_2 = np.mean(history[episode - window + 1:episode + 1, 1])
-        print(f"Episode {episode+1}: Reward Agent 1 = {ep_reward_1:.2f} (Avg: {avg_reward_1:.2f}), "
-              f"Agent 2 = {ep_reward_2:.2f} (Avg: {avg_reward_2:.2f})")
+        ckpt = tf.train.Checkpoint(actor1=agent_1_policy, actor2=agent_2_policy,
+                           critic=critic, opt1=actor_optimizer_1,
+                           opt2=actor_optimizer_2, crit_opt=critic_optimizer)
+        
+        manager = tf.train.CheckpointManager(ckpt, directory=checkpoint_dir, max_to_keep=5)
+        
+        if train_step % 500 == 0:
+            manager.save(checkpoint_number=train_step)
 
     env.close()
 
+    # Plot results
     window_size = 30
     moving_avg_0 = np.convolve(history[:,0], np.ones(window_size)/window_size, mode='valid')
     moving_avg_1 = np.convolve(history[:,1], np.ones(window_size)/window_size, mode='valid')
+    moving_avg_2 = np.convolve(history[:,2], np.ones(window_size)/window_size, mode='valid')
 
     plt.plot(np.arange(window_size-1, len(history[:,0])), moving_avg_0, label='Agent 1 (Avg Last 30)')
     plt.plot(np.arange(window_size-1, len(history[:,1])), moving_avg_1, label='Agent 2 (Avg Last 30)')
+    plt.plot(np.arange(window_size-1, len(history[:,2])), moving_avg_2, label='Total reward (Avg Last 30)')
     plt.xlabel("Episode")
     plt.ylabel("Average Reward")
     plt.title("Average Rewards Over Time")
