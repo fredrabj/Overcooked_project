@@ -1,32 +1,35 @@
 import tensorflow as tf
+import tensorflow_probability as tfp
 import numpy as np
 import random
 import datetime
 import os
 import matplotlib.pyplot as plt
-import tensorflow_probability as tfp
+import cv2
 
 from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv, Overcooked
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld
 
 # ------------------------------------------------------------------------------
-# Reproducibility
+# Set seeds
 # ------------------------------------------------------------------------------
 seed = 42
 random.seed(seed)
 np.random.seed(seed)
 tf.random.set_seed(seed)
 
+
 # ------------------------------------------------------------------------------
 # Hyperparameters
 # ------------------------------------------------------------------------------
+
 gamma = 0.99    
 actor_lr = 2.5e-4
 critic_lr = 1e-3
 entropy_coef = 0.001
-num_episodes = 100
+num_episodes = 3500
 gae_lambda = 0.95
-checkpoint_dir = "checkpoints/a2c"
+checkpoint_dir = "checkpoints"
 
 # ------------------------------------------------------------------------------
 # Model Definitions
@@ -110,16 +113,95 @@ def compute_action_tf(obs, actor):
     action = dist.sample()[0]  # Remove the extra batch dimension.
     return action  # Optionally, you could also return log_prob.
 
-
-# ------------------------------------------------------------------------------
-# Main Training Loop
-# ------------------------------------------------------------------------------
-def main():
-    # Create the Overcooked environment.
+def evaluate(checkpoint, episodes=1, render=False):
     base_mdp = OvercookedGridworld.from_layout_name("cramped_room")
     base_env = OvercookedEnv.from_mdp(base_mdp, info_level=0, horizon=400)
     env = Overcooked(base_env=base_env, featurize_fn=base_env.featurize_state_mdp)
 
+    input_dim = env.observation_space.shape[0]
+    output_dim = env.action_space.n
+    
+    # Rebuild models
+    agent_1_policy = PolicyNetwork(output_dim)
+    agent_2_policy = PolicyNetwork(output_dim)
+    critic = CentralCritic()
+
+    # Dummy calls to build the model shapes
+    _ = agent_1_policy(tf.zeros((1, input_dim)))
+    _ = agent_2_policy(tf.zeros((1, input_dim)))
+    _ = critic(tf.zeros((1, 2 * input_dim)))
+
+    # Rebuild optimizers
+    actor_optimizer_1 = tf.keras.optimizers.Adam(learning_rate=actor_lr)
+    actor_optimizer_2 = tf.keras.optimizers.Adam(learning_rate=actor_lr)
+    critic_optimizer = tf.keras.optimizers.Adam(learning_rate=critic_lr)
+
+    ckpt = tf.train.Checkpoint(
+        actor1=agent_1_policy,
+        actor2=agent_2_policy,
+        critic=critic,
+        opt1=actor_optimizer_1,
+        opt2=actor_optimizer_2,
+        crit_opt=critic_optimizer
+    )
+
+    manager = tf.train.CheckpointManager(ckpt, directory=checkpoint_dir, max_to_keep=5)
+
+    # Restore the latest checkpoint
+    ckpt.restore(os.path.join(checkpoint_dir, checkpoint)).expect_partial()
+
+    if manager.latest_checkpoint:
+        print(f"Restored from {manager.latest_checkpoint}")
+    else:
+        print("No checkpoint found.")
+
+    state = env.reset()
+    done = False
+    rewards = []
+
+    for i in range(episodes):
+        state = env.reset()
+        total_reward = 0
+        while not done:
+            obs1, obs2 = state["both_agent_obs"]
+            obs1_tensor = tf.convert_to_tensor(obs1, dtype=tf.float32)
+            obs2_tensor = tf.convert_to_tensor(obs2, dtype=tf.float32)
+
+            # Compute actions using the TF-compiled function.
+            action1_tf = compute_action_tf(obs1_tensor, agent_1_policy)
+            action2_tf = compute_action_tf(obs2_tensor, agent_2_policy)
+
+            action1 = int(action1_tf.numpy())
+            action2 = int(action2_tf.numpy())
+
+
+            state, reward, done, info = env.step((action1, action2))
+            total_reward += reward
+
+            if render:
+                image = env.render()
+                image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                image = cv2.resize(image, (400,400))
+                cv2.imshow("Overcooked", image)
+                key = cv2.waitKey(100) & 0xFF
+                if key == ord('q'):
+                    break
+
+        rewards.append(total_reward)
+
+    print(f"Evaluation episode completed. Total reward: {np.mean(np.array(total_reward))}")
+    env.close()
+
+
+# ------------------------------------------------------------------------------
+# Main Training Loop
+# ------------------------------------------------------------------------------
+
+def main(checkpoint=None, checkpoint_step=0):
+    # Create the Overcooked environment.
+    base_mdp = OvercookedGridworld.from_layout_name("cramped_room")
+    base_env = OvercookedEnv.from_mdp(base_mdp, info_level=0, horizon=400)
+    env = Overcooked(base_env=base_env, featurize_fn=base_env.featurize_state_mdp)
     input_dim = env.observation_space.shape[0]
     output_dim = env.action_space.n
 
@@ -132,22 +214,40 @@ def main():
     actor_optimizer_2 = tf.keras.optimizers.Adam(actor_lr)
     critic_optimizer = tf.keras.optimizers.Adam(critic_lr)
 
+
     # Warm up the networks by performing a dummy forward pass.
     dummy_input = tf.zeros((1, input_dim), dtype=tf.float32)
     _ = agent_1_policy(dummy_input)
     _ = agent_2_policy(dummy_input)
     _ = critic(tf.concat([dummy_input, dummy_input], axis=-1))
+
     
+    # Restore from checkpoint
+    if not checkpoint is None:
+        ckpt = tf.train.Checkpoint(
+            actor1=agent_1_policy,
+            actor2=agent_2_policy,
+            critic=critic,
+            opt1=actor_optimizer_1,
+            opt2=actor_optimizer_2,
+            crit_opt=critic_optimizer
+        )
+
+        manager = tf.train.CheckpointManager(ckpt, directory=checkpoint_dir, max_to_keep=5)
+
+        # Restore the latest checkpoint
+        ckpt.restore(os.path.join(checkpoint_dir, checkpoint)).expect_partial()
+    
+    episode = checkpoint_step
     # Logging setup.
     history = np.zeros((num_episodes, 3))
-    train_step = 0
     log_dir = "logs/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     agent_1_writer = tf.summary.create_file_writer(log_dir + "/agent_1")
     agent_2_writer = tf.summary.create_file_writer(log_dir + "/agent_2")
     os.makedirs(checkpoint_dir, exist_ok=True)
     ep_reward_tot = 0
 
-    for episode in range(num_episodes):
+    while episode < num_episodes:
         state = env.reset()  # Expect state["both_agent_obs"] = (obs_agent1, obs_agent2)
         done = False
 
@@ -241,15 +341,15 @@ def main():
 
         # Log losses and returns.
         with agent_1_writer.as_default():
-            tf.summary.scalar("policy_loss", loss1, step=train_step)
-            tf.summary.scalar("episode_return", sum(rew1_list), step=train_step)
-            tf.summary.scalar("avg_reward", avg_reward_1, step=train_step)
+            tf.summary.scalar("policy_loss", loss1, step=episode)
+            tf.summary.scalar("episode_return", sum(rew1_list), step=episode)
+            tf.summary.scalar("avg_reward", avg_reward_1, step=episode)
         with agent_2_writer.as_default():
-            tf.summary.scalar("policy_loss", loss2, step=train_step)
-            tf.summary.scalar("episode_return", sum(rew2_list), step=train_step)
-            tf.summary.scalar("avg_reward", avg_reward_2, step=train_step)
-            tf.summary.scalar("avg_total_reward", avg_reward_tot, step=train_step)
-        train_step += 1
+            tf.summary.scalar("policy_loss", loss2, step=episode)
+            tf.summary.scalar("episode_return", sum(rew2_list), step=episode)
+            tf.summary.scalar("avg_reward", avg_reward_2, step=episode)
+            tf.summary.scalar("avg_total_reward", avg_reward_tot, step=episode)
+        episode += 1
 
         ckpt = tf.train.Checkpoint(actor1=agent_1_policy, actor2=agent_2_policy,
                            critic=critic, opt1=actor_optimizer_1,
@@ -257,8 +357,8 @@ def main():
         
         manager = tf.train.CheckpointManager(ckpt, directory=checkpoint_dir, max_to_keep=5)
         
-        if train_step % 500 == 0:
-            manager.save(checkpoint_number=train_step)
+        if episode % 500 == 0:
+            manager.save(checkpoint_number=episode)
 
     env.close()
 
@@ -279,4 +379,11 @@ def main():
     plt.show()
 
 if __name__ == "__main__":
-    main()
+    ## Train from scratch:
+    # main()
+    
+    ## Train from checkpoint:
+    # main("ckpt-2500", 2500)
+
+    ## Evaluate checkpoint
+    evaluate("ckpt-3500", render=True)
