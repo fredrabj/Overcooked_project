@@ -1,6 +1,10 @@
-opencv_contrib_python==4.8.1.78
-opencv_python==4.8.1.78
-overcooked_ai==1.1.0
 tensorflow==2.19.0
 tensorflow_probability==0.25.0
+tf_keras==2.19.0
+jinja2
+pyyaml==6.0.2
+typeguard==4.4.3
+
+opencv_python==4.8.1.78
+opencv_contrib_python==4.8.1.78
 matplotlib==3.5.1
