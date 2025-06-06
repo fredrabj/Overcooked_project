@@ -6,6 +6,7 @@ import datetime
 import os
 import matplotlib.pyplot as plt
 import cv2
+import argparse
 
 from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv, Overcooked
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld
@@ -378,12 +379,37 @@ def main(checkpoint=None, checkpoint_step=0):
     plt.grid(True)
     plt.show()
 
-if __name__ == "__main__":
-    ## Train from scratch:
-    # main()
-    
-    ## Train from checkpoint:
-    # main("ckpt-2500", 2500)
 
-    ## Evaluate checkpoint
-    evaluate("ckpt-3500", render=True)
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run MAPPO training or evaluation.")
+    parser.add_argument(
+        "--mode", choices=["train", "train_resume", "eval"], required=True,
+        help="Mode to run: 'train' to start from scratch, 'train_resume' to resume from a checkpoint, 'eval' to evaluate a checkpoint."
+    )
+    parser.add_argument(
+        "--checkpoint", type=str, default=None,
+        help="Checkpoint name (e.g., 'ckpt-2500'). Required for 'train_resume' and 'eval'."
+    )
+    parser.add_argument(
+        "--step", type=int, default=0,
+        help="Step number associated with the checkpoint. Required for 'train_resume'."
+    )
+    parser.add_argument(
+        "--render", action="store_true",
+        help="Render environment during evaluation."
+    )
+
+    args = parser.parse_args()
+
+    if args.mode == "train":
+        main()
+
+    elif args.mode == "train_resume":
+        if not args.checkpoint or args.step <= 0:
+            raise ValueError("You must provide a valid --checkpoint and --step for resuming training.")
+        main(args.checkpoint, args.step)
+
+    elif args.mode == "eval":
+        if not args.checkpoint:
+            raise ValueError("You must provide a valid --checkpoint for evaluation.")
+        evaluate(args.checkpoint, render=args.render)
